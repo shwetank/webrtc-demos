@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VideoChat</title>
+    <meta name="viewport" content="width=device-width">
+    <script src="http://use.edgefonts.net/open-sans-condensed:n3,i3,n7:all.js"></script> 
+    <style type="text/css">
+    body {
+        font-family: open-sans-condensed, sans-serif;
+    }
+
+    h1 {
+        background-color: #55ADBF;
+        padding: 5px;
+        border-radius: 5px;
+        max-width: 500px;
+    }
+
+    button {
+        display: inline-block;
+        margin-bottom: 5px;
+    }
+
+    #chats {
+        outline : 1px solid #000;
+        width: 80%;
+        min-height: 50px;
+        margin: 2px;
+    }
+    video {
+        max-width: 300px;
+        max-height: 300px;
+        outline: 1px solid #000;
+    }
+
+    .circleenabled {
+        -webkit-mask-box-image: url(circle2.png);
+        mask-box-image: url(circle2.png);   
+    }
+
+    .current {
+        background-color: #2c3e50;
+    }
+
+    .user {
+        font-weight: bold;
+        font-size: 1.25em;
+        color: #000000;
+    }
+
+    #chats {
+        background-color: #EFEDE0;
+        color: #888888;
+        padding: 5px;
+        font-size: 1.2em;
+        max-width: 600px;
+    }
+
+    video {
+        max-width: 300px;
+        max-height: 300px;
+        outline: 1px solid #000;
+    }
+
+    .circleenabled {
+        -webkit-mask-box-image: url(circle2.png);
+        mask-box-image: url(circle2.png);   
+    }
+    </style>
+</head>
+<body>
+<h1>Basic WebRTC VideoChat Demo including DataChannels</h1>
+
+<video id="myvideo"></video>
+<video id="othervideo"></video>
+
+<div id="chatdiv">
+Your Message: <input type="text" id="chatmessage" /><button id="sendchat">Send</button>
+</div>
+
+<div>
+<button id="vidcircle">Toggle Circle Effect</button>
+</div>
+
+<div id="chats"></div>
+
+<script src="https://cdn.pubnub.com/pubnub.min.js"></script> 
+
+<script type="text/javascript">
+/* This demo relies on pubnub for signalling */
+var pubnub = PUBNUB.init({
+    publish_key: '', /* Enter your pubnub publish key */
+    subscribe_key: '' /* Enter your pubnub subscribe key */
+});
+
+var constraints = {video: {
+    mandatory: {
+      maxWidth: 640,
+      maxHeight: 480
+    }
+  }, audio: true};
+
+var chatDiv = document.querySelector("#chats");
+var chatMessage = document.querySelector("#chatmessage");
+var buttonSendChat = document.querySelector("#sendchat");
+var buttonCircleEffect = document.querySelector("#vidcircle");
+var myVideo = document.querySelector("#myvideo");
+var otherVideo = document.querySelector("#othervideo");
+var user;
+var otherPerson;
+var localStream;
+var remoteStream;
+var isDataChannelReady = false;
+var RTCPeerConnection = webkitRTCPeerConnection;
+var peerConnection;
+var dataChannel;
+var config = {"iceServers":[{"url":"stun:stun.l.google.com:19302"}]};
+var connection = { 'optional': [{'DtlsSrtpKeyAgreement': true}, {'RtpDataChannels': true }] };
+var sdpConstraints = {'mandatory':
+            {
+                'OfferToReceiveAudio': true,
+                'OfferToReceiveVideo': true
+            }
+        };
+
+var thePrompt = prompt('Enter Username');
+user = thePrompt;
+if (user.length > 0) {
+  navigator.webkitGetUserMedia(constraints, handleUserMedia, gotError);
+}
+
+function connectIt(){
+    pubnub.subscribe({
+    channel: 'hello_world',
+    message: function(m){
+
+    var json = m;
+    console.log(json);
+    var n = typeof json;
+    console.log("typeof: "+n+" ... and value is: "+json);
+    if (json !== null){
+
+    if (json.action == "candidate"){
+               if (json.from != user){
+                    processIce(json.data);
+               }
+            } 
+
+            else if (json.action == "offer"){
+                if (json.from != user){
+                    if (json.from){otherPerson = json.from; console.log('otherPerson:'+json.from);}
+                    processOffer(json.data);
+                }
+            }
+
+            else if (json.action == "answer"){
+                if (json.from != user){
+                    if (json.from){otherPerson = json.from; console.log('otherPerson:'+json.from);}
+                    processAnswer(json.data);
+                }
+            }
+        }
+}
+});
+
+initCall();
+
+}
+
+function openDataChannel(){
+    peerConnection = new webkitRTCPeerConnection(config, connection);
+    peerConnection.onicecandidate = function(e){
+        if (!peerConnection || !e || !e.candidate) return;
+        var candidate = event.candidate;
+        sendNegotiation("candidate", candidate);
+    }
+
+    peerConnection.addStream(localStream);
+    peerConnection.onaddstream = handleRemoteStream;
+
+    dataChannel = peerConnection.createDataChannel("datachannel", {reliable: true});
+    functionDataChannel = peerConnection.createDataChannel("fchannel", {reliable: true});
+
+    dataChannel.onmessage = function(e){
+        chatDiv.innerHTML += "<p><span class=\"user\">"+otherPerson+"</span>: "+e.data+"</p>";
+        console.log(""+otherPerson+" has said: "+e.data+"");
+    }
+
+    dataChannel.onopen = function(){
+       
+        console.log("--Data Channel Opened!");
+        if (dataChannel.readyState == "open"){
+            console.log("Data Channel is official Open");
+            isDataChannelReady = true;
+            chatDiv.innerHTML = "<p>A new person has joined the chat! His name is <i>"+otherPerson+"</i></p>";
+
+            if (document.visibilityState != "visible"){
+                var firstOne = new Notification("New person Joined!", {body: ""+otherPerson+" has joined the conversation."});
+                console.log(document.visibilityState);
+            }
+
+        }
+    }
+
+    dataChannel.onclose = function(){console.log("--Data Channel Closed--");}
+    dataChannel.onerror = function(){console.log("--Some Error while doing Data Channel--");}
+
+    peerConnection.ondatachannel = function(){
+        console.log('peerConnection.ondatachannel event fired');
+    }
+
+    //////
+    functionDataChannel.onmessage = function(message){
+        console.log("--functionDataChannel message recieved is: "+message.data+"--");
+    if (message.data == "remoteCircle"){
+        makeCircle(otherVideo);
+        }
+    }
+
+    functionDataChannel.onopen = function(){
+        console.log("--functionDataChannel Open--");
+    }
+
+}
+
+function processOffer(offer){
+    openDataChannel();
+    peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+
+    peerConnection.createAnswer(function (sdp){
+        peerConnection.setLocalDescription(sdp);
+        sendNegotiation("answer", sdp);
+        console.log("--Send Answer from remote--");
+    }, null, sdpConstraints);
+    console.log("--Processed offer and sent answer from remote--");
+}
+
+function handleRemoteStream(event) {
+  console.log('Remote stream added.');
+  attachMediaStream(otherVideo, event.stream);
+  console.log('Remote stream attached!!.');
+  remoteStream = event.stream;
+}
+
+function processAnswer(answer){
+    peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+    console.log("--Processed Answer--");
+}
+
+function processIce(iceCandidate){
+    peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidate));
+}
+
+function sendNegotiation(type, sdp){
+    var json;
+    if (sdp){
+        json = {from: user, action: type, data: sdp};
+    } else {
+        json = {from: user, action: type};    
+    }
+    pubnub.publish({
+             channel : "hello_world",
+             message : json
+         });
+}
+
+buttonSendChat.onclick = function(e){
+    e.preventDefault();
+    var message = chatMessage.value;
+
+    if (dataChannel.readyState == "open"){
+            console.log("Data Channel is officially Open");
+            isDataChannelReady = true;
+        }
+   
+   if (isDataChannelReady == true){
+        dataChannel.send(message);
+        chatDiv.innerHTML += "<p><span class=\"user\">"+user+"</span>: "+message+"</p>";
+        console.log(""+user+" has said: "+message+"");
+    } else {
+        console.log('readyState is false');
+    }
+
+}
+
+function handleUserMedia(stream) {
+    localStream = stream;
+    attachMediaStream(myVideo, stream);
+    console.log('Adding local stream.');
+   connectIt();
+}
+
+function attachMediaStream(el, stream){
+    el.src = window.webkitURL.createObjectURL(stream);
+    el.play();
+}
+
+function gotError(){
+    console.log('oops ...');
+}
+
+buttonCircleEffect.onclick = function(){
+    makeCircle(myVideo);
+    functionDataChannel.send("remoteCircle");
+}
+
+function makeCircle(el){
+    el.classList.toggle("circleenabled");
+}
+
+
+function initCall(){
+    openDataChannel();
+    var offer = peerConnection.createOffer(function (sdp){
+        peerConnection.setLocalDescription(sdp);
+        sendNegotiation("offer", sdp);
+        console.log("--Send Offer--");
+    }, null, sdpConstraints);
+}
+
+Notification.requestPermission(function() {});
+</script>
+</div>
+</body>
+</html>
