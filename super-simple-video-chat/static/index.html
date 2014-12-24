@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Another</title>
+	<style type="text/css" media="screen">
+		video {
+			outline: 1px solid #000;
+			max-width: 320px;
+			max-height: 240px;
+			display: inline-block;
+		}
+	</style>
+</head>
+<body>
+<h1>WebRTC chat!</h1>
+<h2>Super Simple Version</h2>
+<button id="connect">Connect</button><br>
+<video id="local-video"></video>
+<video id="remote-video"></video>
+<script src="scripts/adapter.js"></script>
+<script>
+var connectButton = document.querySelector("#connect");
+var localVideo = document.querySelector("#local-video");
+var remoteVideo = document.querySelector("#remote-video");
+var dataChannel;
+var ws;
+var localStream;
+var remoteStream;
+user = Math.random() + "";
+
+var constraints = {video: {
+    mandatory: {
+      minWidth: 320,
+      minHeight: 240
+    }
+  }, audio: false};
+
+var config = {"iceServers":[{"url":"stun:stun.l.google.com:19302"}]};
+var connection = { 'optional': [{'DtlsSrtpKeyAgreement': true}, {'RtpDataChannels': true }] };
+var sdpConstraints = {'mandatory':
+            {
+                'OfferToReceiveAudio': false,
+                'OfferToReceiveVideo': true
+            }
+        };
+
+getUserMedia(constraints, handleLocalMedia , gotError);
+
+var peerConnection = new RTCPeerConnection(config, connection);
+peerConnection.onaddstream = handleRemoteMedia;
+dataChannel = peerConnection.createDataChannel("datachannel", {reliable: false});
+
+    dataChannel.onmessage = function(e){
+    	console.log("DC from the person:" +e.data);
+    }
+
+    dataChannel.onopen = function(){
+    	console.log("DC opened");
+    };
+
+    dataChannel.onclose = function(){console.log("DC closed!")};
+    dataChannel.onerror = function(){console.log("DC Error!!!")};
+
+    peerConnection.ondatachannel = function () {
+    	console.log('peerConnection.ondatachannel event fired.');
+    }; 
+
+peerConnection.onicecandidate = function(e){
+	    if (!peerConnection || !e || !e.candidate) return;
+	    var candidate = e.candidate;
+	    sendMessage("candidate", candidate);
+};
+
+
+function init() {
+	ws = new WebSocket("ws://127.0.0.1:8088");
+
+	ws.onopen = function(e) {
+		console.log("WebSocket Open!");
+	};
+
+	ws.onmessage = function(e) {
+		console.log("Message Recieved: "+e.data);
+		var json = JSON.parse(e.data);
+
+		if (json.action == "candidate"){
+			console.log("-- Got Candidate --");
+			if (json.from != user){
+				processIce(json.data);
+			}
+		}
+
+		else if (json.action == "offer"){
+			console.log("-- Recieved Offer --");
+			if (json.from != user){
+				processOffer(json.data);
+			}
+		}
+
+		else if (json.action == "answer"){
+			console.log("-- Recieved Answer --");
+			if (json.to != user){
+				processAnswer(json.data);
+			}
+		}
+
+	}; 
+
+	ws.onerror = function(e) {
+		console.log("-- An error occured with the WebSocket --");
+	};
+
+};
+
+function sendMessage(type, sdp){
+	var dataPacket;
+	if (sdp){
+		dataPacket = {from: user, action: type, data: sdp};
+	} else {
+		dataPacket = {from: user, action: type};
+	}
+	ws.send(JSON.stringify(dataPacket));
+};
+
+function processIce(iceCandidate){
+	peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidate), function(){}, gotError);
+};
+
+function processOffer(offer){
+	peerConnection.setRemoteDescription(new RTCSessionDescription(offer), function(){}, gotError);
+
+	peerConnection.createAnswer(function(sdp){
+		peerConnection.setLocalDescription(sdp, function(){}, gotError);
+		sendMessage("answer", sdp);
+		console.log("Send Answer");
+	}, gotError, sdpConstraints);
+	console.log("Processed Offer");
+};
+
+function processAnswer(answer){
+	peerConnection.setRemoteDescription(new RTCSessionDescription(answer), function(){}, gotError);
+};
+
+function beginOffer(){
+	peerConnection.createOffer(function(sdp){
+		
+			peerConnection.setLocalDescription(sdp, function(){}, gotError);
+		
+		sendMessage("offer", sdp);
+		console.log("Send offer");
+	}, gotError, sdpConstraints);
+};
+
+function handleLocalMedia(stream){
+	attachMediaStream(localVideo, stream);
+	localStream = stream;
+	peerConnection.addStream(localStream);
+};
+
+function handleRemoteMedia(event){
+	attachMediaStream(remoteVideo, event.stream);
+	remoteStream = event.stream;
+};
+
+function attachMediaStream(el, stream){
+	el.src = URL.createObjectURL(stream);
+    el.play();
+};
+
+function gotError(){
+	console.log("Error.");
+};
+
+connectButton.onclick = function(){
+	beginOffer();
+}
+
+init();
+</script>
+</body>
+</html>
