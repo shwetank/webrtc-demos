@@ -9,6 +9,5 @@ Just clone the repo and run it on a local server. Make sure you have a WebRTC ca
 ## gUM with CSS
 This demo basically explores how you can use various things like CSS filters, blend modes and CSS Masks to achieve fun effects with real-time video. 
 
-## Basic Video Chat
-
-This demo is a straight basic video chat demo which uses PubNub for signalling, and does Audio+Video chat along with using Data Channels for text based chat. It also uses CSS Masks to acheive a *circle* effect which can be reflected on the other side using data channels. I also use HTML5 Notifications along with the Page Visibility API so that if you're on some other tab when the user connects, it shows you a notification. 
+## Super Simple Video Chat
+This demo uses a simple node server for signalling, and establishes a basic video chat (data channels too, but nothing beyond just establishing a connection). This is just to make the simplest possible demo of a very simple video chat application using webrtc. 
